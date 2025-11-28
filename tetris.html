@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>歐拉實驗室：空間堆疊 (3D Tetris)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+        
+        .glass-panel {
+            background: rgba(10, 15, 30, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(6, 182, 212, 0.2);
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.1);
+        }
+        
+        .key-cap {
+            display: inline-block;
+            min-width: 24px;
+            text-align: center;
+            padding: 2px 6px;
+            background: rgba(6, 182, 212, 0.15);
+            border: 1px solid rgba(6, 182, 212, 0.4);
+            border-radius: 4px;
+            font-family: monospace;
+            color: #22d3ee;
+            box-shadow: 0 0 5px rgba(34, 211, 238, 0.2);
+            margin: 0 2px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
+        .neon-text {
+            text-shadow: 0 0 5px rgba(34, 211, 238, 0.5), 0 0 10px rgba(34, 211, 238, 0.3);
+        }
+
+        @keyframes slideDown { from { transform: translate(-50%, -60%); opacity: 0; } to { transform: translate(-50%, -50%); opacity: 1; } }
+        .game-over-modal { animation: slideDown 0.4s ease-out forwards; }
+
+        /* 自定義滑桿 */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #22d3ee;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px #22d3ee;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 背景音樂 -->
+    <audio id="bgm" loop>
+        <source src="https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- 3D 場景 -->
+    <div id="canvas-container" class="absolute inset-0 z-0"></div>
+
+    <!-- UI: 頂部資訊 -->
+    <div class="absolute top-0 w-full p-4 z-10 flex justify-between items-start pointer-events-none">
+        <div class="glass-panel px-6 py-3 rounded-tr-2xl rounded-bl-2xl shadow-lg pointer-events-auto border-l-4 border-cyan-500 flex items-center gap-6">
+            <div>
+                <h1 class="text-cyan-400 font-bold text-xl neon-text">歐拉空間堆疊 <span class="text-xs text-cyan-200/70 block font-normal tracking-wider">PROJECT: EULER BLOCKOUT</span></h1>
+                <div class="mt-2 text-sm text-gray-300 flex gap-4">
+                    <div>SCORE: <span id="score-el" class="text-yellow-400 font-mono text-xl font-bold">0</span></div>
+                    <div>LINES: <span id="lines-el" class="text-white font-mono text-xl font-bold">0</span></div>
+                </div>
+            </div>
+            
+            <!-- 音樂開關 -->
+            <button id="music-toggle" class="bg-slate-800 hover:bg-slate-700 text-cyan-400 p-2 rounded-full border border-cyan-500/30 transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- 視角與狀態提示 -->
+        <div class="glass-panel px-4 py-2 rounded-2xl hidden md:block text-xs text-gray-400 pointer-events-auto border border-cyan-900/50">
+            <span class="mr-3">視角: <span id="cam-mode-text" class="text-cyan-300 font-bold">標準</span> (按 Enter 切換)</span>
+        </div>
+    </div>
+
+    <!-- UI: 右側預覽窗 (Next Piece) -->
+    <div class="absolute right-6 top-24 z-10 hidden md:block pointer-events-none">
+        <div class="glass-panel p-4 rounded-xl pointer-events-auto w-32 flex flex-col items-center">
+            <h3 class="text-cyan-400 text-xs font-bold mb-2 border-b border-gray-600 pb-1 w-full text-center">NEXT</h3>
+            <div id="next-piece-container" class="w-24 h-24 rounded-lg bg-slate-900/50"></div>
+        </div>
+    </div>
+
+    <!-- UI: 右下角操作指引 (常駐顯示) -->
+    <div class="absolute bottom-6 right-6 z-10 hidden md:block pointer-events-none">
+        <div class="glass-panel p-4 rounded-xl pointer-events-auto">
+            <h3 class="text-cyan-400 text-xs font-bold mb-2 border-b border-gray-600 pb-1">控制面板</h3>
+            <div class="grid grid-cols-2 gap-x-6 gap-y-3 text-xs text-gray-300">
+                
+                <!-- 移動 -->
+                <div class="col-span-2">
+                    <div class="text-gray-500 mb-1">平移 (Move)</div>
+                    <div class="flex items-center justify-between">
+                        <span><span class="key-cap">↑</span> 北 (N)</span>
+                        <span><span class="key-cap">↓</span> 南 (S)</span>
+                    </div>
+                    <div class="flex items-center justify-between mt-1">
+                        <span><span class="key-cap">←</span> 西 (W)</span>
+                        <span><span class="key-cap">→</span> 東 (E)</span>
+                    </div>
+                </div>
+
+                <!-- 旋轉 -->
+                <div class="col-span-2 border-t border-gray-700 pt-2">
+                    <div class="text-gray-500 mb-1">旋轉 (Rotate)</div>
+                    <div class="flex justify-between items-center mb-1">
+                        <span>水平轉</span>
+                        <div><span class="key-cap">Q</span> <span class="key-cap">E</span></div>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span>翻轉</span>
+                        <div><span class="key-cap">R</span> <span class="key-cap">F</span></div>
+                    </div>
+                </div>
+
+                <!-- 落下 -->
+                <div class="col-span-2 border-t border-gray-700 pt-2">
+                    <div class="flex justify-between items-center">
+                        <span>快速落下</span>
+                        <span class="key-cap w-16">SPACE</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UI: 左側幾何數據分析 -->
+    <div class="absolute left-4 top-1/2 transform -translate-y-1/2 z-10 hidden md:block pointer-events-none">
+        <div class="glass-panel p-5 rounded-xl w-48 pointer-events-auto border-r-2 border-cyan-500/30">
+            <h3 class="text-cyan-400 text-xs tracking-widest font-bold border-b border-gray-600 pb-2 mb-3">幾何分析模組</h3>
+            <div class="space-y-4">
+                <div>
+                    <div class="text-[10px] text-cyan-200/60 uppercase">Volume (體積)</div>
+                    <div class="text-xl font-mono text-white"><span id="vol-el">0</span> <span class="text-xs text-gray-500">voxels</span></div>
+                </div>
+                <div>
+                    <div class="text-[10px] text-cyan-200/60 uppercase">Surface Area (表面積)</div>
+                    <div class="text-xl font-mono text-white"><span id="area-el">0</span> <span class="text-xs text-gray-500">units²</span></div>
+                </div>
+                <div class="pt-2 border-t border-gray-600/50">
+                     <div class="text-[10px] text-cyan-200/60 uppercase mb-1">Class Type</div>
+                     <div id="shape-name" class="text-sm font-bold text-yellow-300 neon-text">SCANNING...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UI: 遊戲開始/設定/結束 模態框 -->
+    <div id="overlay-panel" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 glass-panel p-8 rounded-2xl shadow-2xl border border-cyan-500/50 max-w-lg w-full backdrop-blur-xl">
+        <div class="text-center mb-4">
+            <h2 id="modal-title" class="text-4xl text-white font-bold mb-2 neon-text tracking-wider">SYSTEM READY</h2>
+            <div class="h-1 w-24 bg-cyan-500 mx-auto rounded-full shadow-[0_0_10px_#06b6d4]"></div>
+        </div>
+
+        <div id="modal-content" class="text-gray-300 space-y-6 text-sm">
+            
+            <!-- 結果顯示區 -->
+            <div id="result-area" class="hidden text-center bg-red-900/30 p-4 rounded-lg border border-red-500/50 mb-4">
+                <p class="text-xl text-red-200 mb-2 font-bold">結構崩塌</p>
+                <div class="flex justify-center gap-8">
+                    <div>
+                        <div class="text-xs text-gray-400">SCORE</div>
+                        <div class="text-xl font-bold text-yellow-400" id="final-score">0</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-400">LINES</div>
+                        <div class="text-xl font-bold text-white" id="final-lines">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 速度設定 -->
+            <div id="setup-area" class="bg-slate-900/60 p-4 rounded-lg border border-slate-700/50">
+                <label for="speed-range" class="block text-cyan-300 font-bold mb-2 flex justify-between">
+                    <span>下落速度 (Drop Speed)</span>
+                    <span id="speed-val-text" class="text-white">Relaxed</span>
+                </label>
+                <input id="speed-range" type="range" min="1" max="10" value="3" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>Slow</span>
+                    <span>Normal</span>
+                    <span>Fast</span>
+                </div>
+            </div>
+
+            <p class="text-center text-xs text-gray-400 italic">
+                提示：右側可預覽下一個圖形。<br>請注意地面的 <span class="text-cyan-300 font-bold">N/S/E/W</span> 方位標記。
+            </p>
+        </div>
+
+        <div class="mt-6 text-center">
+            <button id="start-btn" class="group relative bg-cyan-600/20 hover:bg-cyan-600 text-cyan-300 hover:text-white font-bold py-4 px-12 rounded-lg transition-all duration-300 border border-cyan-500 hover:shadow-[0_0_20px_rgba(6,182,212,0.6)]">
+                <span id="start-btn-text" class="relative z-10">初始化連結</span>
+                <div class="absolute inset-0 h-full w-full scale-0 rounded-lg transition-all duration-300 group-hover:scale-100 group-hover:bg-cyan-600/10"></div>
+            </button>
+        </div>
+    </div>
+
+    <!-- 手機端控制 -->
+    <div class="absolute bottom-4 left-0 w-full p-2 z-20 flex flex-col gap-2 md:hidden">
+        <div class="flex justify-between w-full px-4">
+            <button id="rotate-btn" class="bg-slate-800/80 text-cyan-400 p-4 rounded-full w-16 h-16 border border-cyan-500/50 active:bg-cyan-900 shadow-lg backdrop-blur-md">↻</button>
+            <button id="drop-btn" class="bg-cyan-700/80 text-white p-4 rounded-full w-16 h-16 border border-cyan-400 active:bg-cyan-600 shadow-lg backdrop-blur-md">⬇</button>
+        </div>
+        <div class="grid grid-cols-3 gap-2 px-8">
+            <div></div>
+            <button id="up-btn" class="bg-slate-800/80 text-cyan-200 p-3 rounded active:bg-slate-700 border border-slate-600 font-bold">N</button>
+            <div></div>
+            <button id="left-btn" class="bg-slate-800/80 text-cyan-200 p-3 rounded active:bg-slate-700 border border-slate-600 font-bold">W</button>
+            <button id="down-btn" class="bg-slate-800/80 text-cyan-200 p-3 rounded active:bg-slate-700 border border-slate-600 font-bold">S</button>
+            <button id="right-btn" class="bg-slate-800/80 text-cyan-200 p-3 rounded active:bg-slate-700 border border-slate-600 font-bold">E</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- 配置 ---
+        const GRID_SIZE = { x: 5, y: 12, z: 5 }; 
+        let baseTickRate = 1200; // 預設變得更慢
+
+        // --- 狀態變量 ---
+        let scene, camera, renderer, controls;
+        let nextScene, nextCamera, nextRenderer; // 預覽相關
+        let starField;
+        let board = []; 
+        let activePiece = null;
+        let nextPieceShape = null; // 儲存下一個形狀
+        let ghostPieceMesh = null;
+        let boardMeshes = []; 
+        let lastTime = 0;
+        let dropCounter = 0;
+        let score = 0;
+        let lines = 0;
+        let isGameOver = false;
+        let isPaused = true;
+        let gridHelper, borderBox;
+        let isMusicPlaying = false;
+
+        // 攝影機模式
+        let camIndex = 0;
+        const CAM_MODES = [
+            { name: "標準", pos: {x: 10, y: 15, z: 10}, look: {x: 0, y: 4, z: 0} },
+            { name: "俯視", pos: {x: 0, y: 22, z: 0}, look: {x: 0, y: 0, z: 0} }, // Top-down
+            { name: "正視", pos: {x: 0, y: 8, z: 18}, look: {x: 0, y: 5, z: 0} }, // Front
+            { name: "側視", pos: {x: 18, y: 8, z: 0}, look: {x: 0, y: 5, z: 0} }, // Side
+        ];
+
+        // --- 方塊形狀定義 ---
+        const SHAPES = [
+            { name: "Monomino", color: 0x22d3ee, blocks: [{x:0, y:0, z:0}] },
+            { name: "Domino", color: 0x34d399, blocks: [{x:0, y:0, z:0}, {x:0, y:1, z:0}] },
+            { name: "Tromino L", color: 0xfacc15, blocks: [{x:0, y:0, z:0}, {x:0, y:1, z:0}, {x:1, y:0, z:0}] },
+            { name: "Tromino I", color: 0xf43f5e, blocks: [{x:0, y:0, z:0}, {x:0, y:1, z:0}, {x:0, y:-1, z:0}] },
+            { name: "Tetromino T", color: 0xa855f7, blocks: [{x:0, y:0, z:0}, {x:-1, y:0, z:0}, {x:1, y:0, z:0}, {x:0, y:0, z:1}] },
+            { name: "Tetromino Cube", color: 0x3b82f6, blocks: [{x:0, y:0, z:0}, {x:1, y:0, z:0}, {x:0, y:1, z:0}, {x:1, y:1, z:0}] }, 
+            { name: "Tetromino S", color: 0xf97316, blocks: [{x:0, y:0, z:0}, {x:1, y:0, z:0}, {x:0, y:1, z:0}, {x:-1, y:1, z:0}] },
+            { name: "Tripod", color: 0xd946ef, blocks: [{x:0,y:0,z:0}, {x:1,y:0,z:0}, {x:0,y:1,z:0}, {x:0,y:0,z:1}] } 
+        ];
+
+        // --- 初始化 ---
+        function init() {
+            initMainScene();
+            initPreviewScene();
+            
+            // Listeners
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('keydown', onKeyDown);
+            setupMobileControls();
+            setupSpeedControl();
+            setupAudioControl();
+
+            // Loop
+            requestAnimationFrame(animate);
+        }
+
+        function initMainScene() {
+            const container = document.getElementById('canvas-container');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020205); 
+            scene.fog = new THREE.FogExp2(0x020205, 0.02);
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+            updateCameraPosition();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.5); 
+            scene.add(ambientLight);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight.position.set(10, 20, 5);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            const blueLight = new THREE.PointLight(0x0088ff, 1, 50);
+            blueLight.position.set(-10, 5, -10);
+            scene.add(blueLight);
+
+            const pinkLight = new THREE.PointLight(0xff0088, 0.8, 50);
+            pinkLight.position.set(10, 5, 10);
+            scene.add(pinkLight);
+
+            createStarField();
+            createGameEnvironment();
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+        }
+
+        // --- 預覽視窗初始化 (Next Piece) ---
+        function initPreviewScene() {
+            const container = document.getElementById('next-piece-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            nextScene = new THREE.Scene();
+            // 透明背景
+            
+            nextCamera = new THREE.PerspectiveCamera(50, width / height, 0.1, 20);
+            nextCamera.position.set(3, 3, 3);
+            nextCamera.lookAt(0, 0, 0);
+
+            nextRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            nextRenderer.setSize(width, height);
+            nextRenderer.setClearColor(0x000000, 0); // 完全透明
+            container.appendChild(nextRenderer.domElement);
+
+            const light = new THREE.DirectionalLight(0xffffff, 2);
+            light.position.set(2, 5, 2);
+            nextScene.add(light);
+            nextScene.add(new THREE.AmbientLight(0x404040));
+        }
+
+        function updatePreviewVisuals() {
+            // 清除舊的預覽
+            while(nextScene.children.length > 0) {
+                const child = nextScene.children[0];
+                if(child.isLight) { // 保留燈光
+                    nextScene.remove(child); // 先移除再加回來，或是過濾掉
+                    // 為了簡單，重新加燈
+                } else {
+                    nextScene.remove(child);
+                }
+            }
+
+            // 加燈
+            const light = new THREE.DirectionalLight(0xffffff, 2);
+            light.position.set(2, 5, 2);
+            nextScene.add(light);
+            nextScene.add(new THREE.AmbientLight(0x404040));
+
+            if (!nextPieceShape) return;
+
+            // 建立預覽 Mesh Group
+            const group = new THREE.Group();
+            const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+            const material = new THREE.MeshStandardMaterial({ color: nextPieceShape.color });
+            
+            // 計算中心點以置中
+            let minX=100, maxX=-100, minY=100, maxY=-100, minZ=100, maxZ=-100;
+
+            nextPieceShape.blocks.forEach(b => {
+                const cube = new THREE.Mesh(geometry, material);
+                cube.position.set(b.x, b.y, b.z);
+                group.add(cube);
+
+                minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x);
+                minY = Math.min(minY, b.y); maxY = Math.max(maxY, b.y);
+                minZ = Math.min(minZ, b.z); maxZ = Math.max(maxZ, b.z);
+            });
+
+            // 中心偏移
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const centerZ = (minZ + maxZ) / 2;
+            
+            group.position.set(-centerX, -centerY, -centerZ);
+
+            // 旋轉一下展示
+            const wrapper = new THREE.Group();
+            wrapper.add(group);
+            nextScene.add(wrapper);
+            
+            // 存儲引用以便旋轉動畫
+            nextScene.userData.previewMesh = wrapper;
+        }
+
+        function setupAudioControl() {
+            const btn = document.getElementById('music-toggle');
+            const audio = document.getElementById('bgm');
+            audio.volume = 0.4; // 預設音量小一點
+
+            btn.addEventListener('click', () => {
+                if(audio.paused) {
+                    audio.play().then(() => {
+                        isMusicPlaying = true;
+                        btn.classList.add('text-cyan-200', 'bg-cyan-900');
+                    }).catch(e => console.log("Audio play failed", e));
+                } else {
+                    audio.pause();
+                    isMusicPlaying = false;
+                    btn.classList.remove('text-cyan-200', 'bg-cyan-900');
+                }
+            });
+        }
+
+        // --- 速度滑桿邏輯 ---
+        function setupSpeedControl() {
+            const range = document.getElementById('speed-range');
+            const text = document.getElementById('speed-val-text');
+            
+            // 初始化值
+            const val = parseInt(range.value);
+            updateSpeedText(val, text);
+
+            range.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value);
+                // 調整公式：讓整體更慢
+                // 1(慢) -> 2000ms
+                // 10(快) -> 200ms
+                // Formula: 2200 - (val * 200)
+                baseTickRate = 2200 - (val * 200);
+                
+                updateSpeedText(val, text);
+            });
+        }
+
+        function updateSpeedText(val, textEl) {
+            let label = "Normal";
+            if (val < 4) label = "Relaxed";
+            if (val > 7) label = "Fast";
+            if (val === 10) label = "INSANE";
+            textEl.textContent = label;
+        }
+
+        // --- 攝影機邏輯 ---
+        function cycleCamera() {
+            camIndex = (camIndex + 1) % CAM_MODES.length;
+            updateCameraPosition();
+            document.getElementById('cam-mode-text').textContent = CAM_MODES[camIndex].name;
+        }
+
+        function updateCameraPosition() {
+            const mode = CAM_MODES[camIndex];
+            camera.position.set(mode.pos.x, mode.pos.y, mode.pos.z);
+            camera.lookAt(mode.look.x, mode.look.y, mode.look.z);
+            if(controls) {
+                controls.target.set(mode.look.x, mode.look.y, mode.look.z);
+                controls.update();
+            }
+        }
+
+        function createStarField() {
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+            for (let i = 0; i < 2000; i++) {
+                vertices.push(
+                    THREE.MathUtils.randFloatSpread(100),
+                    THREE.MathUtils.randFloatSpread(100),
+                    THREE.MathUtils.randFloatSpread(100)
+                );
+            }
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            const material = new THREE.PointsMaterial({ color: 0x88ccff, size: 0.2, transparent: true, opacity: 0.8 });
+            starField = new THREE.Points(geometry, material);
+            scene.add(starField);
+        }
+
+        function createTextSprite(text, color) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.font = "Bold 160px 'Segoe UI', Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = color;
+            ctx.fillText(text, 128, 128);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.8 });
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(2, 2, 1);
+            return sprite;
+        }
+
+        function createGameEnvironment() {
+            const boxGeo = new THREE.BoxGeometry(GRID_SIZE.x, GRID_SIZE.y, GRID_SIZE.z);
+            const edges = new THREE.EdgesGeometry(boxGeo);
+            borderBox = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x0ea5e9, opacity: 0.3, transparent: true }));
+            borderBox.position.set(0, GRID_SIZE.y/2 - 0.5, 0); 
+            scene.add(borderBox);
+
+            gridHelper = new THREE.GridHelper(GRID_SIZE.x, GRID_SIZE.x, 0x0ea5e9, 0x1e293b);
+            gridHelper.position.y = -0.5;
+            scene.add(gridHelper);
+
+            const planeGeo = new THREE.PlaneGeometry(GRID_SIZE.x, GRID_SIZE.z);
+            const planeMat = new THREE.MeshBasicMaterial({ color: 0x0ea5e9, side: THREE.DoubleSide, transparent: true, opacity: 0.1 });
+            const plane = new THREE.Mesh(planeGeo, planeMat);
+            plane.rotation.x = -Math.PI / 2;
+            plane.position.y = -0.55;
+            scene.add(plane);
+
+            // 方向標記
+            const dist = GRID_SIZE.x / 2 + 1.5; 
+            const labelN = createTextSprite("N", "#ef4444"); labelN.position.set(0, 0, -dist); scene.add(labelN);
+            const labelS = createTextSprite("S", "#ffffff"); labelS.position.set(0, 0, dist); scene.add(labelS);
+            const labelE = createTextSprite("E", "#ffffff"); labelE.position.set(dist, 0, 0); scene.add(labelE);
+            const labelW = createTextSprite("W", "#ffffff"); labelW.position.set(-dist, 0, 0); scene.add(labelW);
+        }
+
+        function resetBoard() {
+            boardMeshes.forEach(item => {
+                scene.remove(item.mesh);
+                if (item.mesh.geometry) item.mesh.geometry.dispose();
+                if (item.mesh.material) item.mesh.material.dispose();
+                if (item.mesh.children) {
+                    item.mesh.children.forEach(c => {
+                        if(c.geometry) c.geometry.dispose();
+                        if(c.material) c.material.dispose();
+                    });
+                }
+            });
+            boardMeshes = [];
+
+            if (activePiece) {
+                scene.remove(activePiece.mesh);
+                activePiece = null;
+            }
+            if (ghostPieceMesh) {
+                scene.remove(ghostPieceMesh);
+                ghostPieceMesh = null;
+            }
+
+            board = Array(GRID_SIZE.y).fill().map(() => 
+                Array(GRID_SIZE.z).fill().map(() => 
+                    Array(GRID_SIZE.x).fill(null)
+                )
+            );
+
+            // 重置下一個方塊
+            nextPieceShape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+            updatePreviewVisuals();
+        }
+
+        class Piece {
+            constructor(shapeTemplate) {
+                this.shape = shapeTemplate;
+                this.blocks = JSON.parse(JSON.stringify(shapeTemplate.blocks));
+                this.color = shapeTemplate.color;
+                
+                this.pos = {
+                    x: Math.floor(GRID_SIZE.x / 2),
+                    y: GRID_SIZE.y - 1,
+                    z: Math.floor(GRID_SIZE.z / 2)
+                };
+
+                this.mesh = new THREE.Group();
+                const geometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+                const material = new THREE.MeshStandardMaterial({ 
+                    color: this.color,
+                    roughness: 0.1,
+                    metalness: 0.1,
+                    emissive: this.color,
+                    emissiveIntensity: 0.2
+                });
+                
+                this.blocks.forEach(b => {
+                    const cube = new THREE.Mesh(geometry, material);
+                    cube.position.set(b.x, b.y, b.z);
+                    cube.castShadow = true;
+                    cube.receiveShadow = true;
+                    this.mesh.add(cube);
+                });
+
+                scene.add(this.mesh);
+                this.updateMeshPosition();
+            }
+
+            logicToWorld(lx, ly, lz) {
+                return {
+                    x: lx - (GRID_SIZE.x - 1) / 2,
+                    y: ly, 
+                    z: lz - (GRID_SIZE.z - 1) / 2
+                };
+            }
+
+            updateMeshPosition() {
+                const worldPos = this.logicToWorld(this.pos.x, this.pos.y, this.pos.z);
+                this.mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+            }
+
+            rotate(axis) {
+                const oldBlocks = JSON.parse(JSON.stringify(this.blocks));
+                this.blocks.forEach(b => {
+                    let temp;
+                    if (axis === 'x') { temp = b.y; b.y = -b.z; b.z = temp; } 
+                    else if (axis === 'y') { temp = b.x; b.x = b.z; b.z = -temp; } 
+                    else if (axis === 'z') { temp = b.x; b.x = -b.y; b.y = temp; }
+                    b.x = Math.round(b.x); b.y = Math.round(b.y); b.z = Math.round(b.z);
+                });
+
+                this.mesh.children.forEach((child, i) => {
+                    child.position.set(this.blocks[i].x, this.blocks[i].y, this.blocks[i].z);
+                });
+
+                if (checkCollision(this.pos.x, this.pos.y, this.pos.z, this.blocks)) {
+                    this.blocks = oldBlocks;
+                    this.mesh.children.forEach((child, i) => {
+                        child.position.set(this.blocks[i].x, this.blocks[i].y, this.blocks[i].z);
+                    });
+                } else {
+                    updateGeometryStats();
+                }
+            }
+
+            move(dx, dy, dz) {
+                if (!checkCollision(this.pos.x + dx, this.pos.y + dy, this.pos.z + dz, this.blocks)) {
+                    this.pos.x += dx;
+                    this.pos.y += dy;
+                    this.pos.z += dz;
+                    this.updateMeshPosition();
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        function checkCollision(px, py, pz, blocks) {
+            for (let b of blocks) {
+                const x = px + b.x;
+                const y = py + b.y;
+                const z = pz + b.z;
+                if (x < 0 || x >= GRID_SIZE.x || y < 0 || z < 0 || z >= GRID_SIZE.z) return true;
+                if (y < GRID_SIZE.y && board[y] && board[y][z] && board[y][z][x] !== null) return true;
+            }
+            return false;
+        }
+
+        function lockPiece() {
+            activePiece.blocks.forEach((b, i) => {
+                const x = activePiece.pos.x + b.x;
+                const y = activePiece.pos.y + b.y;
+                const z = activePiece.pos.z + b.z;
+                if (y >= GRID_SIZE.y) { isGameOver = true; return; }
+                if (y < 0) return;
+
+                board[y][z][x] = activePiece.color;
+                const originalMesh = activePiece.mesh.children[i];
+                const newMesh = originalMesh.clone();
+                newMesh.material = newMesh.material.clone();
+                newMesh.material.emissiveIntensity = 0.05; 
+                newMesh.position.copy(activePiece.mesh.position).add(originalMesh.position);
+                scene.add(newMesh);
+                boardMeshes.push({ mesh: newMesh, x, y, z });
+            });
+
+            scene.remove(activePiece.mesh);
+            activePiece = null;
+
+            if (isGameOver) {
+                endGame();
+            } else {
+                checkLines();
+                spawnPiece();
+            }
+        }
+
+        function checkLines() {
+            let linesCleared = 0;
+            for (let y = 0; y < GRID_SIZE.y; y++) {
+                let isFull = true;
+                for (let z = 0; z < GRID_SIZE.z; z++) {
+                    for (let x = 0; x < GRID_SIZE.x; x++) {
+                        if (board[y][z][x] === null) { isFull = false; break; }
+                    }
+                    if (!isFull) break;
+                }
+
+                if (isFull) {
+                    linesCleared++;
+                    clearLayer(y);
+                    y--; 
+                }
+            }
+
+            if (linesCleared > 0) {
+                score += linesCleared * 100 * linesCleared;
+                lines += linesCleared;
+                updateUI();
+                borderBox.material.color.setHex(0xffff00);
+                setTimeout(() => borderBox.material.color.setHex(0x0ea5e9), 200);
+            }
+        }
+
+        function clearLayer(layerY) {
+            for (let y = layerY; y < GRID_SIZE.y - 1; y++) {
+                board[y] = JSON.parse(JSON.stringify(board[y + 1]));
+            }
+            board[GRID_SIZE.y - 1] = Array(GRID_SIZE.z).fill().map(() => Array(GRID_SIZE.x).fill(null));
+
+            const remainingMeshes = [];
+            boardMeshes.forEach(item => {
+                if (item.y === layerY) {
+                    scene.remove(item.mesh);
+                    if(item.mesh.geometry) item.mesh.geometry.dispose();
+                } else if (item.y > layerY) {
+                    item.y -= 1;
+                    item.mesh.position.y -= 1;
+                    remainingMeshes.push(item);
+                } else {
+                    remainingMeshes.push(item);
+                }
+            });
+            boardMeshes = remainingMeshes;
+        }
+
+        function spawnPiece() {
+            // 使用預存的 nextPieceShape，如果沒有則隨機生成 (第一塊)
+            const shapeToSpawn = nextPieceShape || SHAPES[Math.floor(Math.random() * SHAPES.length)];
+            
+            // 生成新的下一個形狀
+            nextPieceShape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+            updatePreviewVisuals();
+
+            activePiece = new Piece(shapeToSpawn);
+            
+            if (checkCollision(activePiece.pos.x, activePiece.pos.y, activePiece.pos.z, activePiece.blocks)) {
+                isGameOver = true;
+                endGame();
+                return;
+            }
+            updateGeometryStats();
+            updateGhostPiece();
+        }
+
+        function updateGeometryStats() {
+            if(!activePiece) return;
+            const vol = activePiece.blocks.length;
+            let surfaceArea = 0;
+            const blockSet = new Set(activePiece.blocks.map(b => `${b.x},${b.y},${b.z}`));
+            const directions = [{x:1, y:0, z:0}, {x:-1, y:0, z:0}, {x:0, y:1, z:0}, {x:0, y:-1, z:0}, {x:0, y:0, z:1}, {x:0, y:0, z:-1}];
+
+            activePiece.blocks.forEach(b => {
+                directions.forEach(d => {
+                    if (!blockSet.has(`${b.x + d.x},${b.y + d.y},${b.z + d.z}`)) surfaceArea++;
+                });
+            });
+
+            document.getElementById('vol-el').textContent = vol;
+            document.getElementById('area-el').textContent = surfaceArea;
+            document.getElementById('shape-name').textContent = activePiece.shape.name;
+        }
+
+        function updateGhostPiece() {
+            if (!activePiece) return;
+            if (!ghostPieceMesh) {
+                ghostPieceMesh = new THREE.Group();
+                scene.add(ghostPieceMesh);
+            }
+            while(ghostPieceMesh.children.length > 0) ghostPieceMesh.remove(ghostPieceMesh.children[0]);
+
+            const geo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15, wireframe: true });
+            activePiece.blocks.forEach(b => {
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(b.x, b.y, b.z);
+                ghostPieceMesh.add(mesh);
+            });
+
+            let dropY = 0;
+            for (let dy = 1; dy < GRID_SIZE.y + 5; dy++) {
+                if (checkCollision(activePiece.pos.x, activePiece.pos.y - dy, activePiece.pos.z, activePiece.blocks)) {
+                    dropY = dy - 1;
+                    break;
+                }
+            }
+            const targetLogicY = activePiece.pos.y - dropY;
+            const worldPos = activePiece.logicToWorld(activePiece.pos.x, targetLogicY, activePiece.pos.z);
+            ghostPieceMesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            controls.update();
+            if(starField) starField.rotation.y += 0.0005;
+
+            // 預覽視窗動畫
+            if(nextScene && nextScene.userData.previewMesh) {
+                nextScene.userData.previewMesh.rotation.y += 0.01;
+                nextRenderer.render(nextScene, nextCamera);
+            }
+
+            if (!isPaused && !isGameOver) {
+                const deltaTime = time - lastTime;
+                if (deltaTime > 0) {
+                   dropCounter += deltaTime;
+                   // 速度隨行數增加，但基數很大，所以還好
+                   const speed = Math.max(100, baseTickRate - (lines * 20));
+                   if (dropCounter > speed) { 
+                       if (activePiece) {
+                           if (!activePiece.move(0, -1, 0)) lockPiece();
+                       }
+                       dropCounter = 0;
+                   }
+                   lastTime = time;
+                }
+            } else {
+                lastTime = time; 
+            }
+            renderer.render(scene, camera);
+        }
+
+        function startGame() {
+            // 嘗試播放音樂
+            const audio = document.getElementById('bgm');
+            // 如果音樂沒有在播放，嘗試播放 (第一次互動)
+            if(audio.paused) {
+                 audio.play().catch(e => console.log("Auto play prevented", e));
+            }
+            
+            resetBoard();
+            document.getElementById('overlay-panel').classList.add('hidden');
+            
+            isPaused = false;
+            isGameOver = false;
+            score = 0;
+            lines = 0;
+            updateUI();
+            
+            spawnPiece();
+            lastTime = performance.now();
+        }
+
+        function resetToMenu() {
+            isPaused = true;
+            isGameOver = false; 
+            resetBoard(); 
+            
+            document.getElementById('overlay-panel').classList.remove('hidden');
+            document.getElementById('modal-title').textContent = "SYSTEM READY";
+            document.getElementById('modal-title').classList.remove('text-red-500');
+            
+            document.getElementById('setup-area').classList.remove('hidden');
+            document.getElementById('result-area').classList.add('hidden');
+            
+            document.getElementById('start-btn-text').textContent = "初始化連結";
+            
+            const btn = document.getElementById('start-btn');
+            btn.onclick = () => startGame();
+        }
+
+        function endGame() {
+            isGameOver = true;
+            document.getElementById('overlay-panel').classList.remove('hidden');
+            
+            document.getElementById('modal-title').textContent = "SYSTEM FAILURE";
+            document.getElementById('modal-title').classList.add('text-red-500');
+            
+            document.getElementById('setup-area').classList.add('hidden');
+            document.getElementById('result-area').classList.remove('hidden');
+            
+            document.getElementById('final-score').textContent = score;
+            document.getElementById('final-lines').textContent = lines;
+
+            document.getElementById('start-btn-text').textContent = "返回設定選單";
+            const btn = document.getElementById('start-btn');
+            btn.onclick = () => resetToMenu();
+        }
+
+        function updateUI() {
+            document.getElementById('score-el').textContent = score;
+            document.getElementById('lines-el').textContent = lines;
+        }
+
+        function onKeyDown(e) {
+            if (isGameOver) return;
+            if (e.key === 'Escape') {
+                if(!isPaused) {
+                    isPaused = true;
+                    document.getElementById('overlay-panel').classList.remove('hidden');
+                    document.getElementById('modal-title').textContent = "PAUSED";
+                    document.getElementById('setup-area').classList.add('hidden'); 
+                    document.getElementById('start-btn-text').textContent = "繼續實驗";
+                    const btn = document.getElementById('start-btn');
+                    btn.onclick = () => {
+                         document.getElementById('overlay-panel').classList.add('hidden');
+                         isPaused = false;
+                         lastTime = performance.now();
+                    };
+                } else {
+                    document.getElementById('overlay-panel').classList.add('hidden');
+                    isPaused = false;
+                    lastTime = performance.now();
+                }
+                return;
+            }
+
+            if (isPaused || !activePiece) return;
+
+            const key = e.key.toLowerCase();
+            switch(key) {
+                case 'w': 
+                case 'arrowup': 
+                    activePiece.move(0, 0, -1); break; // North
+                case 's': 
+                case 'arrowdown': 
+                    activePiece.move(0, 0, 1); break; // South
+                case 'a': 
+                case 'arrowleft': 
+                    activePiece.move(-1, 0, 0); break; // West
+                case 'd': 
+                case 'arrowright': 
+                    activePiece.move(1, 0, 0); break; // East
+                
+                case ' ': while(activePiece.move(0, -1, 0)); lockPiece(); break;
+                case 'q': activePiece.rotate('y'); break; 
+                case 'e': activePiece.rotate('y'); break; 
+                case 'r': activePiece.rotate('x'); break; 
+                case 'f': activePiece.rotate('z'); break;
+                case 'enter': cycleCamera(); break; 
+            }
+            updateGhostPiece();
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // 預覽視窗大小
+            const nextContainer = document.getElementById('next-piece-container');
+            if(nextRenderer && nextContainer) {
+                nextRenderer.setSize(nextContainer.clientWidth, nextContainer.clientHeight);
+                nextCamera.aspect = nextContainer.clientWidth / nextContainer.clientHeight;
+                nextCamera.updateProjectionMatrix();
+            }
+        }
+
+        function setupMobileControls() {
+            const bind = (id, action) => {
+                const btn = document.getElementById(id);
+                if(btn) {
+                    btn.addEventListener('touchstart', (e) => { e.preventDefault(); action(); updateGhostPiece(); });
+                    btn.addEventListener('click', (e) => { e.preventDefault(); action(); updateGhostPiece(); });
+                }
+            };
+            bind('up-btn', () => activePiece && activePiece.move(0,0,-1)); 
+            bind('down-btn', () => activePiece && activePiece.move(0,0,1)); 
+            bind('left-btn', () => activePiece && activePiece.move(-1,0,0)); 
+            bind('right-btn', () => activePiece && activePiece.move(1,0,0)); 
+            
+            bind('rotate-btn', () => activePiece && activePiece.rotate('y')); 
+            bind('drop-btn', () => { if(activePiece) { while(activePiece.move(0, -1, 0)); lockPiece(); }});
+        }
+
+        // Initial Button Binding
+        document.getElementById('start-btn').onclick = () => startGame();
+
+        init();
+    </script>
+</body>
+</html>
